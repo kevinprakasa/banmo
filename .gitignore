@@ -38,3 +38,5 @@ chromedriver.exe
 
 # Logs
 *.log 
+# Browser profile data
+.stockbit_browser_profile/

@@ -1,5 +1,6 @@
 import os
 import time
+from pathlib import Path
 from dotenv import load_dotenv
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
@@ -20,8 +21,13 @@ def load_config():
 
 
 def setup_driver(config):
-    """Initialize and configure Chrome WebDriver"""
+    """Initialize and configure Chrome WebDriver with persistent profile"""
     chrome_options = Options()
+    
+    user_data_dir = Path.home() / ".stockbit_browser_profile"
+    user_data_dir.mkdir(exist_ok=True)
+    
+    chrome_options.add_argument(f"--user-data-dir={str(user_data_dir)}")
     
     if not config["headless"]:
         chrome_options.add_argument("--start-maximized")
@@ -105,12 +111,12 @@ def login_to_stockbit(driver, config, manual_login=False):
                 verification_wait.until(lambda d: "new-device" not in d.current_url.lower())
                 print("Verification completed!")
             
-            return True
         except Exception as e:
             print(f"Error during login: {str(e)}")
             return False
     else:
         wait = WebDriverWait(driver, 10)
+        redirect_wait = WebDriverWait(driver, 30)
         
         try:
             username_field = wait.until(EC.presence_of_element_located((By.ID, "username")))
@@ -124,11 +130,34 @@ def login_to_stockbit(driver, config, manual_login=False):
             print("Clicking login button...")
             login_button.click()
             
-            wait.until(lambda d: "login" not in d.current_url.lower())
-            print("Login successful!")
+            time.sleep(2)
+            redirect_wait.until(lambda d: "login" not in d.current_url.lower())
+            current_url = driver.current_url
+            print(f"Login successful! Current URL: {current_url}")
+            if "new-device" in current_url.lower():
+                print("NEW DEVICE VERIFICATION REQUIRED")
+                print("="*70)
+                print("A verification code has been sent to your email.")
+                print("Please enter the code in the browser window.")
+                print("Waiting for you to complete verification...")
+                print("="*70 + "\n")
+                
+                verification_wait = WebDriverWait(driver, 300)
+                try:
+                    verification_wait.until(lambda d: "new-device" not in d.current_url.lower())
+                    final_url = driver.current_url
+                    print(f"\nVerification completed! Redirected to: {final_url}")
+                except Exception as e:
+                    error_msg = str(e) if str(e) else type(e).__name__
+                    print(f"\nTimeout waiting for verification. Current URL: {driver.current_url}")
+                    print(f"Error details: {error_msg}")
+                    raise Exception(f"Verification timeout - please complete verification manually and try again. Error: {error_msg}")
+            
             return True
         except Exception as e:
-            print(f"Login failed: {str(e)}")
+            error_msg = str(e) if str(e) else f"{type(e).__name__} (no message)"
+            print(f"Login failed: {error_msg}")
+            print(f"Current URL: {driver.current_url}")
             return False
 
 
@@ -152,6 +181,7 @@ def main(manual_login=False):
         time.sleep(20)
     finally:
         driver.quit()
+
 
 
 if __name__ == "__main__":
