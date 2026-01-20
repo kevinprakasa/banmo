@@ -970,15 +970,39 @@ def extract_broker_summary(page, stock_symbol="BUMI", days=1):
     
     # If days > 1, extract data for each individual day
     if days > 1:
-        print(f"\nExtracting broker summary for each of the last {days} days...")
+        print(f"\nExtracting broker summary for each of the last {days} trading days (skipping weekends)...")
         all_results = []
         
-        for day_offset in range(days - 1, -1, -1):  # Start from oldest day to newest
-            target_date = datetime.now() - timedelta(days=day_offset)
-            day_number = days - day_offset
+        # Collect trading days (skip weekends: Saturday=5, Sunday=6)
+        trading_dates = []
+        current_date = datetime.now()
+        day_offset = 0
+        
+        while len(trading_dates) < days:
+            check_date = current_date - timedelta(days=day_offset)
+            weekday = check_date.weekday()  # Monday=0, Sunday=6
+            
+            # Skip weekends (Saturday=5, Sunday=6)
+            if weekday < 5:  # Monday through Friday
+                trading_dates.append(check_date)
+            
+            day_offset += 1
+            
+            # Safety check to prevent infinite loop
+            if day_offset > days * 2:
+                print(f"⚠️  Warning: Could not find {days} trading days within {day_offset} calendar days")
+                break
+        
+        # Sort dates from oldest to newest
+        trading_dates.sort()
+        
+        # Extract data for each trading day
+        for idx, target_date in enumerate(trading_dates, 1):
+            day_number = idx
+            day_name = target_date.strftime('%A')
             
             print(f"\n{'='*70}")
-            print(f"Day {day_number}/{days}: {target_date.strftime('%b %d, %Y')}")
+            print(f"Day {day_number}/{days} ({day_name}): {target_date.strftime('%b %d, %Y')}")
             print(f"{'='*70}")
             
             # Set date range to single day (start = end = target_date)
@@ -1000,12 +1024,24 @@ def extract_broker_summary(page, stock_symbol="BUMI", days=1):
         
         return {
             'all_days': all_results,
-            'total_days': days,
-            'summary': f"Extracted data for {len(all_results)} days"
+            'total_days': len(all_results),
+            'summary': f"Extracted data for {len(all_results)} trading days"
         }
     
     # Single day extraction (original behavior)
-    return extract_single_day_data(page, datetime.now())
+    # If today is a weekend, use the last trading day instead
+    today = datetime.now()
+    weekday = today.weekday()  # Monday=0, Sunday=6
+    
+    if weekday >= 5:  # Saturday or Sunday
+        # Go back to find the last Friday
+        days_back = weekday - 4  # Saturday: 1 day back, Sunday: 2 days back
+        target_date = today - timedelta(days=days_back)
+        print(f"⚠️  Today is {today.strftime('%A')}, using last trading day: {target_date.strftime('%b %d, %Y')}")
+    else:
+        target_date = today
+    
+    return extract_single_day_data(page, target_date)
 
 
 def set_single_date_range(page, target_date):
