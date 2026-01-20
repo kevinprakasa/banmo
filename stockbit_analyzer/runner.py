@@ -23,52 +23,75 @@ def setup_browser(playwright, config, manual_login=False):
     
     headless_mode = config["headless"] and not manual_login
     
-    context = playwright.chromium.launch_persistent_context(
-        user_data_dir=str(user_data_dir),
-        headless=headless_mode,
-        viewport={"width": 1920, "height": 1080},
-        ignore_https_errors=True,
-        user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-        args=[
-            "--disable-blink-features=AutomationControlled",
-            "--disable-dev-shm-usage",
-            "--disable-web-security",
-            "--disable-features=IsolateOrigins,site-per-process",
-            "--disable-infobars",
-            "--disable-save-password-bubble",
-            "--disable-single-click-autofill",
-            "--disable-translate",
-            "--disable-component-extensions-with-background-pages",
-            "--disable-default-apps",
-            "--disable-extensions-file-access-check",
-            "--disable-extensions-http-throttling",
-            "--disable-ipc-flooding-protection",
-            "--no-first-run",
-            "--no-default-browser-check",
-            "--no-pings",
-            "--password-store=basic",
-            "--use-mock-keychain",
-            "--enable-automation=false",
-            "--exclude-switches=enable-automation",
-            "--disable-background-timer-throttling",
-            "--disable-backgrounding-occluded-windows",
-            "--disable-renderer-backgrounding",
-            "--disable-features=TranslateUI",
-            "--disable-features=BlinkGenPropertyTrees",
-        ],
-        extra_http_headers={
-            "Accept-Language": "en-US,en;q=0.9",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-            "Accept-Encoding": "gzip, deflate, br",
-            "Connection": "keep-alive",
-            "Upgrade-Insecure-Requests": "1",
-            "Sec-Fetch-Dest": "document",
-            "Sec-Fetch-Mode": "navigate",
-            "Sec-Fetch-Site": "none",
-            "Sec-Fetch-User": "?1",
-            "Cache-Control": "max-age=0",
-        }
-    )
+    # Try to launch persistent context, with retry logic for locked profiles
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            context = playwright.chromium.launch_persistent_context(
+                user_data_dir=str(user_data_dir),
+                headless=headless_mode,
+                viewport={"width": 1920, "height": 1080},
+                ignore_https_errors=True,
+                user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+                args=[
+                    "--disable-blink-features=AutomationControlled",
+                    "--disable-dev-shm-usage",
+                    "--disable-web-security",
+                    "--disable-features=IsolateOrigins,site-per-process",
+                    "--disable-infobars",
+                    "--disable-save-password-bubble",
+                    "--disable-single-click-autofill",
+                    "--disable-translate",
+                    "--disable-component-extensions-with-background-pages",
+                    "--disable-default-apps",
+                    "--disable-extensions-file-access-check",
+                    "--disable-extensions-http-throttling",
+                    "--disable-ipc-flooding-protection",
+                    "--no-first-run",
+                    "--no-default-browser-check",
+                    "--no-pings",
+                    "--password-store=basic",
+                    "--use-mock-keychain",
+                    "--enable-automation=false",
+                    "--exclude-switches=enable-automation",
+                    "--disable-background-timer-throttling",
+                    "--disable-backgrounding-occluded-windows",
+                    "--disable-renderer-backgrounding",
+                    "--disable-features=TranslateUI",
+                    "--disable-features=BlinkGenPropertyTrees",
+                ],
+                extra_http_headers={
+                    "Accept-Language": "en-US,en;q=0.9",
+                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+                    "Accept-Encoding": "gzip, deflate, br",
+                    "Connection": "keep-alive",
+                    "Upgrade-Insecure-Requests": "1",
+                    "Sec-Fetch-Dest": "document",
+                    "Sec-Fetch-Mode": "navigate",
+                    "Sec-Fetch-Site": "none",
+                    "Sec-Fetch-User": "?1",
+                    "Cache-Control": "max-age=0",
+                }
+            )
+            break
+        except Exception as e:
+            if attempt < max_retries - 1:
+                error_msg = str(e)
+                if "Target page, context or browser has been closed" in error_msg or "already in use" in error_msg.lower():
+                    print(f"Browser profile is locked (attempt {attempt + 1}/{max_retries}). Waiting 2 seconds...")
+                    time.sleep(2)
+                    # Try to kill any existing browser processes using this profile
+                    import subprocess
+                    try:
+                        subprocess.run(["pkill", "-f", "stockbit_browser_profile"], check=False)
+                        time.sleep(1)
+                    except:
+                        pass
+                    continue
+                else:
+                    raise
+            else:
+                raise
     
     context.set_default_timeout(60000)
     context.set_default_navigation_timeout(60000)
@@ -341,9 +364,21 @@ def navigate_with_retry(page, url, max_retries=3):
             print(f"Attempting to navigate to {url} (attempt {attempt + 1}/{max_retries})...")
             page.goto(url, wait_until="networkidle", timeout=60000)
             current_url = page.url
-            if url.split('?')[0] in current_url or current_url.startswith(url.split('?')[0]):
+            
+            # Check if navigation succeeded (either exact match or redirected)
+            url_base = url.split('?')[0].split('#')[0].rstrip('/')
+            current_base = current_url.split('?')[0].split('#')[0].rstrip('/')
+            
+            # Success if we reached the target URL or were redirected (which is OK for login page)
+            if url_base in current_url or current_url.startswith(url_base) or current_url.startswith(url.split('?')[0]):
                 print(f"Successfully navigated to: {current_url}")
                 return True
+            
+            # If trying to go to login page but redirected away, that's also OK (already authenticated)
+            if "login" in url.lower() and "login" not in current_url.lower():
+                print(f"Redirected away from login page (likely already authenticated): {current_url}")
+                return True
+                
         except PlaywrightTimeoutError as e:
             print(f"Navigation timeout on attempt {attempt + 1}, retrying...")
             if attempt < max_retries - 1:
@@ -371,6 +406,15 @@ def login_to_stockbit(page, config, manual_login=False):
     
     print("Waiting for page to fully load and reCAPTCHA to initialize...")
     time.sleep(3)
+    
+    # Check if already authenticated (redirected away from login page)
+    current_url = page.url
+    is_login_page = "login" in current_url.lower() or current_url.endswith("/login")
+    
+    if not is_login_page:
+        print(f"\n✅ Already authenticated! Current URL: {current_url}")
+        print("Skipping login process...")
+        return True
     
     if manual_login:
         print("\n" + "="*70)
@@ -401,10 +445,32 @@ def login_to_stockbit(page, config, manual_login=False):
                         print("\n⚠️  Browser page was closed. Please check the browser window.")
                         return False
                     
-                    current_url = page.url
+                    try:
+                        current_url = page.url
+                    except Exception as e:
+                        print(f"Error getting URL: {e}")
+                        time.sleep(check_interval)
+                        elapsed_time += check_interval
+                        continue
                     
-                    if current_url != initial_url and "login" not in current_url.lower():
-                        print(f"\n✅ Login successful! Current URL: {current_url}")
+                    # Check if we've left the login page (more robust check)
+                    initial_url_clean = initial_url.split('?')[0].split('#')[0].rstrip('/')
+                    current_url_clean = current_url.split('?')[0].split('#')[0].rstrip('/')
+                    
+                    is_login_page = "login" in current_url.lower() or current_url_clean.endswith("/login")
+                    url_changed = current_url_clean != initial_url_clean
+                    
+                    # Debug output every 30 seconds
+                    if elapsed_time % 30 == 0:
+                        print(f"Waiting for login... ({elapsed_time}s/{max_wait_time}s)")
+                        print(f"Current URL: {current_url}")
+                        print(f"Initial URL: {initial_url}")
+                        print(f"URL changed: {url_changed}, Is login page: {is_login_page}")
+                    
+                    if url_changed and not is_login_page:
+                        print(f"\n✅ Login detected! URL changed from login page.")
+                        print(f"Current URL: {current_url}")
+                        print(f"Proceeding with login completion...")
                         
                         if "new-device" in current_url.lower():
                             print("\nNew device verification required. Please complete verification...")
@@ -437,14 +503,11 @@ def login_to_stockbit(page, config, manual_login=False):
                             print(f"Current URL: {page.url}")
                             return False
                         
+                        print("Login completed successfully, returning True...")
                         return True
                     
                     time.sleep(check_interval)
                     elapsed_time += check_interval
-                    
-                    if elapsed_time % 30 == 0:
-                        print(f"Waiting for login... ({elapsed_time}s/{max_wait_time}s)")
-                        print(f"Current URL: {current_url}")
                         
                 except Exception as e:
                     error_msg = str(e)
@@ -535,7 +598,177 @@ def login_to_stockbit(page, config, manual_login=False):
             return False
 
 
-def main(manual_login=False):
+def format_broker_summary_table(rows):
+    """Format broker summary rows into a nicely formatted table"""
+    # Table header
+    header = f"{'BY':<6} {'B.val':<12} {'B.lot':<10} {'B.avg':<8} | {'SL':<6} {'S.val':<12} {'S.lot':<10} {'S.avg':<8}"
+    separator = "-" * 100
+    
+    # Format each row
+    formatted_rows = [header, separator]
+    
+    for row in rows:
+        formatted_row = (
+            f"{row['buyBroker']:<6} "
+            f"{row['buyValue']:<12} "
+            f"{row['buyLot']:<10} "
+            f"{row['buyAvg']:<8} | "
+            f"{row['sellBroker']:<6} "
+            f"{row['sellValue']:<12} "
+            f"{row['sellLot']:<10} "
+            f"{row['sellAvg']:<8}"
+        )
+        formatted_rows.append(formatted_row)
+    
+    return "\n".join(formatted_rows)
+
+
+def extract_broker_summary(page, stock_symbol="BUMI"):
+    """Extract Broker Summary table data from Stockbit stock page"""
+    print(f"\nNavigating to stock page for {stock_symbol}...")
+    url = f"https://stockbit.com/symbol/{stock_symbol}"
+    
+    if not navigate_with_retry(page, url):
+        raise Exception(f"Failed to navigate to {url}")
+    
+    print("Waiting for Broker Summary table to load...")
+    time.sleep(3)
+    
+    try:
+        broker_summary_data = page.evaluate("""
+            () => {
+                // Find the Broker Summary container
+                const brokerSummary = document.querySelector('div.sc-f10b1c12-0.jQepBs') || 
+                                     Array.from(document.querySelectorAll('div')).find(el => 
+                                         el.innerText && el.innerText.includes('Broker Summary') && 
+                                         el.innerText.includes('BY')
+                                     );
+                
+                if (!brokerSummary) {
+                    return { error: 'Broker Summary container not found' };
+                }
+                
+                // Find the data table with class sc-4858c0ef-27
+                const dataTable = brokerSummary.querySelector('div.sc-4858c0ef-27.fhVdvL') ||
+                                  brokerSummary.querySelector('div[class*="sc-4858c0ef-27"]') ||
+                                  Array.from(brokerSummary.querySelectorAll('div')).find(el => 
+                                      el.innerText && el.innerText.includes('BY') && 
+                                      el.innerText.includes('B.val') && el.innerText.includes('B.lot')
+                                  );
+                
+                if (!dataTable) {
+                    return { 
+                        error: 'Data table not found',
+                        containerText: brokerSummary.innerText.substring(0, 500)
+                    };
+                }
+                
+                // Extract all text content
+                const fullText = dataTable.innerText;
+                
+                // Parse the text - split by whitespace and filter empty strings
+                const tokens = fullText.split(/\\s+/).filter(t => t.trim().length > 0);
+                
+                // Find header row
+                let headerStart = -1;
+                for (let i = 0; i < tokens.length - 7; i++) {
+                    if (tokens[i] === 'BY' && tokens[i+1] === 'B.val' && tokens[i+2] === 'B.lot' && 
+                        tokens[i+3] === 'B.avg' && tokens[i+4] === 'SL' && tokens[i+5] === 'S.val' &&
+                        tokens[i+6] === 'S.lot' && tokens[i+7] === 'S.avg') {
+                        headerStart = i;
+                        break;
+                    }
+                }
+                
+                if (headerStart === -1) {
+                    return {
+                        success: true,
+                        rawText: fullText,
+                        tokens: tokens,
+                        error: 'Could not find header row'
+                    };
+                }
+                
+                // Parse data rows (start after header which is 8 tokens)
+                const rows = [];
+                let i = headerStart + 8;
+                
+                while (i < tokens.length) {
+                    // Look for broker code pattern (2 uppercase letters)
+                    if (/^[A-Z]{2}$/.test(tokens[i])) {
+                        const buyBroker = tokens[i];
+                        
+                        // Check if we have enough tokens for a complete row (7 more)
+                        if (i + 7 < tokens.length) {
+                            const buyValue = tokens[i + 1];
+                            const buyLot = tokens[i + 2];
+                            const buyAvg = tokens[i + 3];
+                            const sellBroker = tokens[i + 4];
+                            const sellValue = tokens[i + 5];
+                            const sellLot = tokens[i + 6];
+                            const sellAvg = tokens[i + 7];
+                            
+                            // Validate - sell broker should also be 2 letters
+                            if (/^[A-Z]{2}$/.test(sellBroker)) {
+                                rows.push({
+                                    buyBroker: buyBroker,
+                                    buyValue: buyValue,
+                                    buyLot: buyLot,
+                                    buyAvg: buyAvg,
+                                    sellBroker: sellBroker,
+                                    sellValue: sellValue,
+                                    sellLot: sellLot,
+                                    sellAvg: sellAvg
+                                });
+                                i += 8;
+                                continue;
+                            }
+                        }
+                    }
+                    i++;
+                }
+                
+                return {
+                    success: true,
+                    rawText: fullText,
+                    tokens: tokens,
+                    rows: rows,
+                    headerStart: headerStart
+                };
+            }
+        """)
+        
+        if broker_summary_data.get('error'):
+            print(f"Error: {broker_summary_data['error']}")
+            if 'containerText' in broker_summary_data:
+                print(f"Container text: {broker_summary_data['containerText']}")
+            return None
+        
+        if not broker_summary_data.get('success'):
+            print("Failed to extract data")
+            return None
+        
+        rows = broker_summary_data.get('rows', [])
+        if not rows:
+            print("No data rows found")
+            print(f"Raw text: {broker_summary_data.get('rawText', '')[:500]}")
+            return None
+        
+        print(f"✅ Successfully extracted {len(rows)} broker summary rows!")
+        
+        return {
+            'rows': rows,
+            'rawText': broker_summary_data.get('rawText', '')
+        }
+        
+    except Exception as e:
+        print(f"Error extracting broker summary: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return None
+
+
+def main(manual_login=False, stock_symbol=None, extract_data=False):
     """Main entry point"""
     config = load_config()
     
@@ -555,9 +788,26 @@ def main(manual_login=False):
             success = login_to_stockbit(page, config, manual_login=manual_login)
             if success:
                 print("\n✅ Login completed successfully!")
+                
+                if extract_data and stock_symbol:
+                    broker_data = extract_broker_summary(page, stock_symbol)
+                    if broker_data and broker_data.get('rows'):
+                        print("\n" + "="*100)
+                        print("BROKER SUMMARY DATA")
+                        print("="*100)
+                        print(format_broker_summary_table(broker_data['rows']))
+                        print("="*100)
+                    elif broker_data:
+                        print("\n" + "="*70)
+                        print("BROKER SUMMARY DATA (Raw)")
+                        print("="*70)
+                        print(broker_data.get('rawText', 'No data'))
+                        print("="*70)
+                
                 if manual_login:
-                    print("Browser will stay open for 30 seconds for you to verify...")
-                    time.sleep(30)
+                    if not extract_data:
+                        print("Browser will stay open for 30 seconds for you to verify...")
+                        time.sleep(30)
                 else:
                     print("Browser will stay open for 10 seconds...")
                     time.sleep(10)
@@ -574,7 +824,16 @@ def main(manual_login=False):
             print("Browser will stay open for 20 seconds for debugging...")
             time.sleep(20)
         finally:
-            context.close()
+            if not extract_data or not manual_login:
+                context.close()
+            else:
+                print("\nBrowser will remain open. Press Ctrl+C to close.")
+                try:
+                    while True:
+                        time.sleep(1)
+                except KeyboardInterrupt:
+                    print("\nClosing browser...")
+                    context.close()
 
 
 

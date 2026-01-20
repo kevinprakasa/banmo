@@ -15,12 +15,26 @@ def parse_args():
         action="store_true",
         help="Enable manual login mode - browser will wait for you to log in manually"
     )
+    parser.add_argument(
+        "--stock",
+        type=str,
+        help="Stock symbol to analyze (e.g., BUMI)"
+    )
+    parser.add_argument(
+        "--extract",
+        action="store_true",
+        help="Extract broker summary data after login"
+    )
     return parser.parse_args()
 
 def main():
     args = parse_args()
     try:
-        run_analyzer(manual_login=args.manual_login)
+        run_analyzer(
+            manual_login=args.manual_login,
+            stock_symbol=args.stock,
+            extract_data=args.extract
+        )
         return 0
     except Exception as e:
         if args.debug:
