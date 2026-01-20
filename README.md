@@ -44,6 +44,21 @@ pip install -r requirements.txt
 python runner.py
 ```
 
+### Manual Login (Bypass reCAPTCHA)
+
+If you're encountering reCAPTCHA issues with automated login, you can use manual login mode:
+
+```
+python -m stockbit_analyzer.cli --manual-login
+```
+
+This will:
+- Open the browser in visible mode (non-headless)
+- Navigate to the Stockbit login page
+- Wait for you to manually log in and solve the reCAPTCHA
+- Automatically detect when login is complete
+- Continue with the rest of the script
+
 ## Features
 
 - Scrapes broker summary data from Stockbit
