@@ -25,6 +25,12 @@ def parse_args():
         action="store_true",
         help="Extract broker summary data after login"
     )
+    parser.add_argument(
+        "--days",
+        type=int,
+        default=1,
+        help="Number of days to look back for broker summary data (default: 1, today only)"
+    )
     return parser.parse_args()
 
 def main():
@@ -33,7 +39,8 @@ def main():
         run_analyzer(
             manual_login=args.manual_login,
             stock_symbol=args.stock,
-            extract_data=args.extract
+            extract_data=args.extract,
+            days=args.days
         )
         return 0
     except Exception as e:

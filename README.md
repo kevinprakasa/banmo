@@ -59,6 +59,22 @@ This will:
 - Automatically detect when login is complete
 - Continue with the rest of the script
 
+### Extract Broker Summary Data
+
+To extract broker summary data for a specific stock:
+
+```
+python -m stockbit_analyzer.cli --manual-login --stock BUMI --extract
+```
+
+To extract data for the last X days (e.g., last 7 days):
+
+```
+python -m stockbit_analyzer.cli --manual-login --stock BUMI --extract --days 7
+```
+
+The `--days` parameter sets how many days back to look (default: 1, which is today only).
+
 ## Features
 
 - Scrapes broker summary data from Stockbit
